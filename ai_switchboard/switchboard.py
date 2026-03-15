@@ -5,7 +5,12 @@ from typing import Any, Union
 
 from livekit.agents import llm
 from livekit.agents.llm import ChatContext, LLMStream
-from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN, APIConnectOptions, NotGivenOr
+from livekit.agents.types import (
+    DEFAULT_API_CONNECT_OPTIONS,
+    NOT_GIVEN,
+    APIConnectOptions,
+    NotGivenOr,
+)
 
 from .analyzer import HeuristicAnalyzer
 from .config import SwitchboardConfig
@@ -81,7 +86,14 @@ class Switchboard(llm.LLM):
     ) -> LLMStream:
         # 1. Extract last user message
         last_text = ""
-        for msg in reversed(chat_ctx.messages):
+        # Support both real ChatContext (.items) and legacy/mock (.messages)
+        try:
+            items = chat_ctx.items
+            if not isinstance(items, list):
+                raise TypeError
+        except (AttributeError, TypeError):
+            items = chat_ctx.messages
+        for msg in reversed(items):
             if msg.role == "user":
                 last_text = msg.text_content or ""
                 break

@@ -4,7 +4,6 @@ from typing import Any
 from unittest.mock import MagicMock, PropertyMock
 
 from ai_switchboard.config import SwitchboardConfig
-from ai_switchboard.context import Context
 from ai_switchboard.events import SwitchEvent
 from ai_switchboard.rule import Rule
 from ai_switchboard.switchboard import Switchboard
@@ -27,7 +26,7 @@ def _make_chat_ctx(messages: list[tuple[str, str]] | None = None) -> MagicMock:
     """Build a fake ChatContext with a list of (role, text) tuples."""
     chat_ctx = MagicMock()
     msgs = []
-    for role, text in (messages or [("user", "hello")]):
+    for role, text in messages or [("user", "hello")]:
         msg = MagicMock()
         msg.role = role
         msg.text_content = text
@@ -155,8 +154,12 @@ class TestCustomRules:
     def test_higher_priority_rule_wins(self):
         fast, smart = _make_mock_llm(), _make_mock_llm()
         rules = [
-            Rule(name="always_smart", condition=lambda ctx: True, use="smart", priority=1),
-            Rule(name="always_fast", condition=lambda ctx: True, use="fast", priority=10),
+            Rule(
+                name="always_smart", condition=lambda ctx: True, use="smart", priority=1
+            ),
+            Rule(
+                name="always_fast", condition=lambda ctx: True, use="fast", priority=10
+            ),
         ]
         sb = Switchboard(fast=fast, smart=smart, rules=rules)
         _chat(sb, "hello")

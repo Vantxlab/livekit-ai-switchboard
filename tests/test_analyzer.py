@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from ai_switchboard.analyzer import HeuristicAnalyzer
 from ai_switchboard.config import SwitchboardConfig
 from ai_switchboard.context import Context
@@ -12,7 +14,9 @@ def _make_ctx(message: str = "", **kwargs) -> Context:
     )
 
 
-def _analyze(message: str = "", *, topics: list[str] | None = None, **ctx_kwargs) -> Context:
+def _analyze(
+    message: str = "", *, topics: list[str] | None = None, **ctx_kwargs
+) -> Context:
     analyzer = HeuristicAnalyzer()
     config = SwitchboardConfig(smart_topics=topics or [])
     ctx = _make_ctx(message, **ctx_kwargs)
@@ -105,7 +109,9 @@ class TestInterruption:
 
 class TestTopicMatch:
     def test_topic_hit(self):
-        ctx = _analyze("I have a question about pricing", topics=["pricing", "warranty"])
+        ctx = _analyze(
+            "I have a question about pricing", topics=["pricing", "warranty"]
+        )
         assert Signal.TOPIC_MATCH in ctx.signals_fired
         assert ctx.heuristic_score >= 0.50
 

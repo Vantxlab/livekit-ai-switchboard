@@ -8,7 +8,7 @@ from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli
 from livekit.agents.pipeline import VoicePipelineAgent
 from livekit.plugins import deepgram, groq, openai, silero
 
-from ai_switchboard import Context, Rule, Switchboard
+from ai_switchboard import Rule, Switchboard
 
 
 async def entrypoint(ctx: JobContext):
@@ -33,8 +33,7 @@ async def entrypoint(ctx: JobContext):
                 Rule(
                     name="simple_confirmation",
                     condition=lambda ctx: (
-                        ctx.last_message_word_count < 5
-                        and ctx.current_model == "smart"
+                        ctx.last_message_word_count < 5 and ctx.current_model == "smart"
                     ),
                     use="fast",
                     priority=5,
