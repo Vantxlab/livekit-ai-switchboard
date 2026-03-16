@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from unittest.mock import MagicMock, PropertyMock
+
+from livekit.agents import llm
+from livekit.agents.llm import ChatChunk, ChatContext, ChoiceDelta
+from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
 
 from ai_switchboard.config import SwitchboardConfig
 from ai_switchboard.events import SwitchEvent
@@ -11,42 +14,68 @@ from ai_switchboard.switchboard import Switchboard
 
 
 # ---------------------------------------------------------------------------
-# Helpers — lightweight mocks that quack like livekit llm.LLM
+# Helpers — fake LLM that implements the real livekit llm.LLM interface
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_llm(name: str = "mock-model") -> MagicMock:
-    """Return a MagicMock that behaves enough like ``llm.LLM`` for routing tests."""
-    mock = MagicMock()
-    type(mock).model = PropertyMock(return_value=name)
-    mock.chat.return_value = MagicMock(name="LLMStream")
-    return mock
+class _FakeLLMStream(llm.LLMStream):
+    """Minimal LLMStream that emits a single assistant chunk."""
+
+    async def _run(self) -> None:
+        self._event_ch.send_nowait(
+            ChatChunk(
+                id="fake-chunk",
+                delta=ChoiceDelta(role="assistant", content="Hello!"),
+            )
+        )
 
 
-def _make_chat_ctx(messages: list[tuple[str, str]] | None = None) -> MagicMock:
-    """Build a fake ChatContext with a list of (role, text) tuples."""
-    chat_ctx = MagicMock()
-    msgs = []
+class FakeLLM(llm.LLM):
+    """A real ``llm.LLM`` subclass for testing — no network calls."""
+
+    def __init__(self, *, model_name: str = "fake-model") -> None:
+        super().__init__()
+        self._model_name = model_name
+        self.chat_call_count = 0
+
+    @property
+    def model(self) -> str:  # type: ignore[override]
+        return self._model_name
+
+    @property
+    def provider(self) -> str:  # type: ignore[override]
+        return "fake"
+
+    def chat(
+        self,
+        *,
+        chat_ctx: ChatContext,
+        tools: list[llm.Tool] | None = None,
+        conn_options=DEFAULT_API_CONNECT_OPTIONS,
+        parallel_tool_calls=None,
+        tool_choice=None,
+        extra_kwargs=None,
+    ) -> llm.LLMStream:
+        self.chat_call_count += 1
+        return _FakeLLMStream(
+            llm=self,
+            chat_ctx=chat_ctx,
+            tools=tools or [],
+            conn_options=conn_options,
+        )
+
+
+def _make_llm(name: str = "fake-model") -> FakeLLM:
+    """Return a FakeLLM instance."""
+    return FakeLLM(model_name=name)
+
+
+def _make_chat_ctx(messages: list[tuple[str, str]] | None = None) -> ChatContext:
+    """Build a real ChatContext with a list of (role, text) tuples."""
+    ctx = ChatContext()
     for role, text in messages or [("user", "hello")]:
-        msg = MagicMock()
-        msg.role = role
-        msg.text_content = text
-        msgs.append(msg)
-    chat_ctx.messages = msgs
-    return chat_ctx
-
-
-def _make_chat_ctx_with_items(messages: list[tuple[str, str]] | None = None) -> MagicMock:
-    """Build a fake ChatContext using .items (like real livekit ChatContext)."""
-    chat_ctx = MagicMock()
-    msgs = []
-    for role, text in messages or [("user", "hello")]:
-        msg = MagicMock()
-        msg.role = role
-        msg.text_content = text
-        msgs.append(msg)
-    chat_ctx.items = msgs
-    return chat_ctx
+        ctx.add_message(role=role, content=text)
+    return ctx
 
 
 def _chat(sb: Switchboard, text: str = "hello") -> Any:
@@ -56,41 +85,41 @@ def _chat(sb: Switchboard, text: str = "hello") -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Tests — all async because LLMStream.__init__ requires a running event loop
 # ---------------------------------------------------------------------------
 
 
 class TestBasicRouting:
-    def test_starts_on_fast_by_default(self):
-        fast, smart = _make_mock_llm("fast-model"), _make_mock_llm("smart-model")
+    async def test_starts_on_fast_by_default(self):
+        fast, smart = _make_llm("fast-model"), _make_llm("smart-model")
         sb = Switchboard(fast=fast, smart=smart)
         assert sb.current_model == "fast"
 
-    def test_simple_message_stays_fast(self):
-        fast, smart = _make_mock_llm("fast-model"), _make_mock_llm("smart-model")
+    async def test_simple_message_stays_fast(self):
+        fast, smart = _make_llm("fast-model"), _make_llm("smart-model")
         sb = Switchboard(fast=fast, smart=smart)
         _chat(sb, "Hi there!")
         assert sb.current_model == "fast"
-        fast.chat.assert_called_once()
-        smart.chat.assert_not_called()
+        assert fast.chat_call_count == 1
+        assert smart.chat_call_count == 0
 
-    def test_complex_message_escalates_to_smart(self):
-        fast, smart = _make_mock_llm("fast-model"), _make_mock_llm("smart-model")
+    async def test_complex_message_escalates_to_smart(self):
+        fast, smart = _make_llm("fast-model"), _make_llm("smart-model")
         sb = Switchboard(fast=fast, smart=smart)
         # pushback (0.40) + multi_question (0.30) = 0.70 > 0.60 threshold
         _chat(sb, "No, that's wrong. Why? How?")
         assert sb.current_model == "smart"
-        smart.chat.assert_called_once()
+        assert smart.chat_call_count == 1
 
-    def test_provider_is_switchboard(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_provider_is_switchboard(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(fast=fast, smart=smart)
         assert sb.provider == "switchboard"
 
 
 class TestStartOn:
-    def test_start_on_smart(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_start_on_smart(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast,
             smart=smart,
@@ -98,12 +127,12 @@ class TestStartOn:
         )
         assert sb.current_model == "smart"
         _chat(sb, "Hello")
-        smart.chat.assert_called_once()
+        assert smart.chat_call_count == 1
 
 
 class TestDeescalation:
-    def test_deescalates_after_cooldown(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_deescalates_after_cooldown(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast,
             smart=smart,
@@ -119,8 +148,8 @@ class TestDeescalation:
         _chat(sb, "thanks")
         assert sb.current_model == "fast"
 
-    def test_cooldown_prevents_early_deescalation(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_cooldown_prevents_early_deescalation(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast,
             smart=smart,
@@ -135,8 +164,8 @@ class TestDeescalation:
 
 
 class TestCustomRules:
-    def test_rule_overrides_heuristic(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_rule_overrides_heuristic(self):
+        fast, smart = _make_llm(), _make_llm()
         # Rule forces smart for any message containing "vip"
         rule = Rule(
             name="vip",
@@ -148,8 +177,8 @@ class TestCustomRules:
         _chat(sb, "I am a VIP customer")
         assert sb.current_model == "smart"
 
-    def test_rule_forces_fast(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_rule_forces_fast(self):
+        fast, smart = _make_llm(), _make_llm()
         # Force fast for short confirmations even when on smart
         rule = Rule(
             name="short_confirm",
@@ -165,8 +194,8 @@ class TestCustomRules:
         _chat(sb, "yes")
         assert sb.current_model == "fast"
 
-    def test_higher_priority_rule_wins(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_higher_priority_rule_wins(self):
+        fast, smart = _make_llm(), _make_llm()
         rules = [
             Rule(
                 name="always_smart", condition=lambda ctx: True, use="smart", priority=1
@@ -181,8 +210,8 @@ class TestCustomRules:
 
 
 class TestTopicEscalation:
-    def test_topic_match_escalates(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_topic_match_escalates(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast,
             smart=smart,
@@ -196,9 +225,9 @@ class TestTopicEscalation:
 
 
 class TestSwitchEventCallback:
-    def test_on_switch_called(self):
+    async def test_on_switch_called(self):
         events: list[SwitchEvent] = []
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast,
             smart=smart,
@@ -209,9 +238,9 @@ class TestSwitchEventCallback:
         assert events[0].changed is False
         assert events[0].to_model == "fast"
 
-    def test_on_switch_records_change(self):
+    async def test_on_switch_records_change(self):
         events: list[SwitchEvent] = []
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast,
             smart=smart,
@@ -225,16 +254,16 @@ class TestSwitchEventCallback:
 
 
 class TestInterruption:
-    def test_record_interruption(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_record_interruption(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(fast=fast, smart=smart)
         sb.record_interruption()
         # interruption (0.20) alone won't escalate (< 0.60)
         _chat(sb, "hello")
         assert sb.current_model == "fast"
 
-    def test_interruption_resets_after_turn(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_interruption_resets_after_turn(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(fast=fast, smart=smart)
         sb.record_interruption()
         _chat(sb, "hello")
@@ -247,41 +276,26 @@ class TestInterruption:
 
 
 class TestModelProperty:
-    def test_model_reflects_current(self):
-        fast, smart = _make_mock_llm("fast-v1"), _make_mock_llm("smart-v1")
+    async def test_model_reflects_current(self):
+        fast, smart = _make_llm("fast-v1"), _make_llm("smart-v1")
         sb = Switchboard(fast=fast, smart=smart)
         assert sb.model == "fast-v1"
         _chat(sb, "No, that's wrong. Why? How?")
         assert sb.model == "smart-v1"
 
 
-class TestChatContextItems:
-    """Test the .items code path (real livekit ChatContext uses .items)."""
+class TestChatContextVariants:
+    """Test different ChatContext structures."""
 
-    def test_items_path_routes_correctly(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
-        sb = Switchboard(fast=fast, smart=smart)
-        ctx = _make_chat_ctx_with_items([("user", "Hi there!")])
-        sb.chat(chat_ctx=ctx)
-        assert sb.current_model == "fast"
-        fast.chat.assert_called_once()
-
-    def test_items_path_escalates(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
-        sb = Switchboard(fast=fast, smart=smart)
-        ctx = _make_chat_ctx_with_items([("user", "No, that's wrong. Why? How?")])
-        sb.chat(chat_ctx=ctx)
-        assert sb.current_model == "smart"
-
-    def test_no_user_message_stays_on_current(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_no_user_message_stays_on_current(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(fast=fast, smart=smart)
         ctx = _make_chat_ctx([("assistant", "Hello! How can I help?")])
         sb.chat(chat_ctx=ctx)
         assert sb.current_model == "fast"
 
-    def test_picks_last_user_message(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_picks_last_user_message(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(fast=fast, smart=smart)
         ctx = _make_chat_ctx([
             ("user", "Hi"),
@@ -291,10 +305,17 @@ class TestChatContextItems:
         sb.chat(chat_ctx=ctx)
         assert sb.current_model == "smart"
 
+    async def test_empty_chat_context(self):
+        fast, smart = _make_llm(), _make_llm()
+        sb = Switchboard(fast=fast, smart=smart)
+        ctx = ChatContext()
+        sb.chat(chat_ctx=ctx)
+        assert sb.current_model == "fast"
+
 
 class TestRepeatRequestAccumulation:
-    def test_repeat_request_count_increments(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_repeat_request_count_increments(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(fast=fast, smart=smart)
         assert sb._repeat_request_count == 0
         _chat(sb, "Can you say that again please?")
@@ -302,16 +323,16 @@ class TestRepeatRequestAccumulation:
         _chat(sb, "Can you repeat that?")
         assert sb._repeat_request_count == 2
 
-    def test_non_repeat_does_not_increment(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_non_repeat_does_not_increment(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(fast=fast, smart=smart)
         _chat(sb, "Hello there")
         assert sb._repeat_request_count == 0
 
 
 class TestTurnTracking:
-    def test_turn_count_increments(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_turn_count_increments(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(fast=fast, smart=smart)
         assert sb._turn_count == 0
         _chat(sb, "Hello")
@@ -319,16 +340,16 @@ class TestTurnTracking:
         _chat(sb, "Hi again")
         assert sb._turn_count == 2
 
-    def test_turns_on_current_increments_without_switch(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_turns_on_current_increments_without_switch(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(fast=fast, smart=smart)
         _chat(sb, "Hello")
         assert sb._turns_on_current == 1
         _chat(sb, "Hi again")
         assert sb._turns_on_current == 2
 
-    def test_turns_on_current_resets_on_switch(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_turns_on_current_resets_on_switch(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(fast=fast, smart=smart)
         _chat(sb, "Hello")
         assert sb._turns_on_current == 1
@@ -339,9 +360,9 @@ class TestTurnTracking:
 
 
 class TestSwitchEventDetails:
-    def test_event_contains_heuristic_score(self):
+    async def test_event_contains_heuristic_score(self):
         events: list[SwitchEvent] = []
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast, smart=smart,
             config=SwitchboardConfig(on_switch=events.append),
@@ -349,9 +370,9 @@ class TestSwitchEventDetails:
         _chat(sb, "No, that's wrong. Why? How?")
         assert events[0].heuristic_score >= 0.60
 
-    def test_event_triggered_by_heuristic(self):
+    async def test_event_triggered_by_heuristic(self):
         events: list[SwitchEvent] = []
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast, smart=smart,
             config=SwitchboardConfig(on_switch=events.append),
@@ -359,9 +380,9 @@ class TestSwitchEventDetails:
         _chat(sb, "No, that's wrong. Why? How?")
         assert events[0].triggered_by == "heuristic"
 
-    def test_event_triggered_by_rule_name(self):
+    async def test_event_triggered_by_rule_name(self):
         events: list[SwitchEvent] = []
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+        fast, smart = _make_llm(), _make_llm()
         rule = Rule(
             name="billing",
             condition=lambda ctx: "billing" in ctx.last_message.lower(),
@@ -375,9 +396,9 @@ class TestSwitchEventDetails:
         _chat(sb, "I have a billing question")
         assert events[0].triggered_by == "billing"
 
-    def test_event_turn_number(self):
+    async def test_event_turn_number(self):
         events: list[SwitchEvent] = []
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast, smart=smart,
             config=SwitchboardConfig(on_switch=events.append),
@@ -387,9 +408,9 @@ class TestSwitchEventDetails:
         assert events[0].turn == 0
         assert events[1].turn == 1
 
-    def test_event_signals_list(self):
+    async def test_event_signals_list(self):
         events: list[SwitchEvent] = []
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast, smart=smart,
             config=SwitchboardConfig(on_switch=events.append),
@@ -400,8 +421,8 @@ class TestSwitchEventDetails:
 
 
 class TestLogDecisions:
-    def test_log_decisions_emits_log(self, caplog):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_log_decisions_emits_log(self, caplog):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast, smart=smart,
             config=SwitchboardConfig(log_decisions=True),
@@ -412,8 +433,8 @@ class TestLogDecisions:
         assert "turn=0" in caplog.records[0].message
         assert "model=fast" in caplog.records[0].message
 
-    def test_log_decisions_off_no_log(self, caplog):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_log_decisions_off_no_log(self, caplog):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast, smart=smart,
             config=SwitchboardConfig(log_decisions=False),
@@ -424,9 +445,9 @@ class TestLogDecisions:
 
 
 class TestDeescalationThreshold:
-    def test_score_between_thresholds_holds_current(self):
+    async def test_score_between_thresholds_holds_current(self):
         """Score between deescalation and escalation thresholds keeps current model."""
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast, smart=smart,
             config=SwitchboardConfig(start_on="smart", cooldown_turns=0),
@@ -436,8 +457,8 @@ class TestDeescalationThreshold:
         _chat(sb, "I beg your pardon?")
         assert sb.current_model == "smart"
 
-    def test_very_low_score_deescalates(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_very_low_score_deescalates(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(
             fast=fast, smart=smart,
             config=SwitchboardConfig(start_on="smart", cooldown_turns=0),
@@ -448,8 +469,8 @@ class TestDeescalationThreshold:
 
 
 class TestDefaultConfig:
-    def test_default_config_applied(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+    async def test_default_config_applied(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(fast=fast, smart=smart)
         assert sb._config.escalation_threshold == 0.60
         assert sb._config.deescalation_threshold == 0.20
@@ -460,13 +481,26 @@ class TestDefaultConfig:
         assert sb._config.log_decisions is False
 
 
-class TestChatForwardsAllArgs:
-    def test_tools_and_options_forwarded(self):
-        fast, smart = _make_mock_llm(), _make_mock_llm()
+class TestChatForwardsArgs:
+    async def test_stream_is_real_llm_stream(self):
+        fast, smart = _make_llm(), _make_llm()
         sb = Switchboard(fast=fast, smart=smart)
         ctx = _make_chat_ctx([("user", "hi")])
-        mock_tools = [MagicMock()]
-        sb.chat(chat_ctx=ctx, tools=mock_tools)
-        _, kwargs = fast.chat.call_args
-        assert kwargs["tools"] is mock_tools
-        assert kwargs["chat_ctx"] is ctx
+        stream = sb.chat(chat_ctx=ctx)
+        assert isinstance(stream, llm.LLMStream)
+
+    async def test_returns_fast_stream(self):
+        fast, smart = _make_llm(), _make_llm()
+        sb = Switchboard(fast=fast, smart=smart)
+        ctx = _make_chat_ctx([("user", "hi")])
+        sb.chat(chat_ctx=ctx)
+        assert fast.chat_call_count == 1
+        assert smart.chat_call_count == 0
+
+    async def test_returns_smart_stream_after_escalation(self):
+        fast, smart = _make_llm(), _make_llm()
+        sb = Switchboard(fast=fast, smart=smart)
+        ctx = _make_chat_ctx([("user", "No, that's wrong. Why? How?")])
+        sb.chat(chat_ctx=ctx)
+        assert smart.chat_call_count == 1
+        assert fast.chat_call_count == 0
