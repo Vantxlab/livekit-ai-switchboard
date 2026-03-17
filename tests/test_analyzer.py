@@ -15,10 +15,19 @@ def _make_ctx(message: str = "", **kwargs) -> Context:
 
 
 def _analyze(
-    message: str = "", *, topics: list[str] | None = None, **ctx_kwargs
+    message: str = "",
+    *,
+    model_topics: dict[str, list[str]] | None = None,
+    stt_confidence_threshold: float = 0.7,
+    long_audio_threshold: float = 10.0,
+    **ctx_kwargs,
 ) -> Context:
     analyzer = HeuristicAnalyzer()
-    config = SwitchboardConfig(smart_topics=topics or [])
+    config = SwitchboardConfig(
+        model_topics=model_topics or {},
+        stt_confidence_threshold=stt_confidence_threshold,
+        long_audio_threshold=long_audio_threshold,
+    )
     ctx = _make_ctx(message, **ctx_kwargs)
     return analyzer.analyze(ctx, config)
 
@@ -110,7 +119,8 @@ class TestInterruption:
 class TestTopicMatch:
     def test_topic_hit(self):
         ctx = _analyze(
-            "I have a question about pricing", topics=["pricing", "warranty"]
+            "I have a question about pricing",
+            model_topics={"premium": ["pricing", "warranty"]},
         )
         assert Signal.TOPIC_MATCH in ctx.signals_fired
         assert ctx.heuristic_score >= 0.50
@@ -120,8 +130,70 @@ class TestTopicMatch:
         assert Signal.TOPIC_MATCH not in ctx.signals_fired
 
     def test_topic_case_insensitive(self):
-        ctx = _analyze("Tell me about WARRANTY options", topics=["warranty"])
+        ctx = _analyze(
+            "Tell me about WARRANTY options",
+            model_topics={"premium": ["warranty"]},
+        )
         assert Signal.TOPIC_MATCH in ctx.signals_fired
+
+
+class TestLowSTTConfidence:
+    def test_none_confidence_no_signal(self):
+        ctx = _analyze("Hello", stt_confidence=None)
+        assert Signal.LOW_STT_CONFIDENCE not in ctx.signals_fired
+
+    def test_high_confidence_no_signal(self):
+        ctx = _analyze("Hello", stt_confidence=0.95)
+        assert Signal.LOW_STT_CONFIDENCE not in ctx.signals_fired
+
+    def test_low_confidence_fires(self):
+        ctx = _analyze("Hello", stt_confidence=0.5)
+        assert Signal.LOW_STT_CONFIDENCE in ctx.signals_fired
+        assert ctx.heuristic_score >= 0.30
+
+    def test_custom_threshold(self):
+        ctx = _analyze("Hello", stt_confidence=0.65, stt_confidence_threshold=0.5)
+        assert Signal.LOW_STT_CONFIDENCE not in ctx.signals_fired
+
+
+class TestLongAudioTurn:
+    def test_none_duration_no_signal(self):
+        ctx = _analyze("Hello", audio_duration=None)
+        assert Signal.LONG_AUDIO_TURN not in ctx.signals_fired
+
+    def test_short_duration_no_signal(self):
+        ctx = _analyze("Hello", audio_duration=5.0)
+        assert Signal.LONG_AUDIO_TURN not in ctx.signals_fired
+
+    def test_long_duration_fires(self):
+        ctx = _analyze("Hello", audio_duration=15.0)
+        assert Signal.LONG_AUDIO_TURN in ctx.signals_fired
+        assert ctx.heuristic_score >= 0.15
+
+    def test_custom_threshold(self):
+        ctx = _analyze("Hello", audio_duration=8.0, long_audio_threshold=5.0)
+        assert Signal.LONG_AUDIO_TURN in ctx.signals_fired
+
+
+class TestSubstringFix:
+    def test_know_does_not_trigger_pushback(self):
+        """'I know what you mean' must NOT trigger pushback from 'no' substring."""
+        ctx = _analyze("I know what you mean")
+        assert Signal.PUSHBACK not in ctx.signals_fired
+
+    def test_no_thats_wrong_triggers_pushback(self):
+        """'No, that's wrong' must trigger pushback."""
+        ctx = _analyze("No, that's wrong")
+        assert Signal.PUSHBACK in ctx.signals_fired
+
+    def test_acknowledge_does_not_trigger_pushback(self):
+        """Words containing 'no' as substring should not trigger."""
+        ctx = _analyze("I want to innovate and explore new technology")
+        assert Signal.PUSHBACK not in ctx.signals_fired
+
+    def test_standalone_no_triggers(self):
+        ctx = _analyze("No")
+        assert Signal.PUSHBACK in ctx.signals_fired
 
 
 class TestScoring:
@@ -138,9 +210,9 @@ class TestScoring:
         assert ctx.heuristic_score >= 0.70
 
     def test_score_capped_at_one(self):
-        # pushback (0.40) + frustration (0.35) + topic (0.50) = 1.25 → 1.0
+        # pushback (0.40) + frustration (0.35) + topic (0.50) = 1.25 -> 1.0
         ctx = _analyze(
             "No, that's wrong. I don't understand the pricing.",
-            topics=["pricing"],
+            model_topics={"premium": ["pricing"]},
         )
         assert ctx.heuristic_score == 1.0

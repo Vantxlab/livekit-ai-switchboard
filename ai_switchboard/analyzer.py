@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from .config import SwitchboardConfig
 from .context import Context
 from .signal import SIGNAL_WEIGHTS, SIGNAL_WORDS, Signal
@@ -41,9 +43,20 @@ class HeuristicAnalyzer:
         if ctx.interruption_count > 0:
             signals.append(Signal.INTERRUPTION)
 
+        # --- Voice signals ---
+        if ctx.stt_confidence is not None and ctx.stt_confidence < config.stt_confidence_threshold:
+            signals.append(Signal.LOW_STT_CONFIDENCE)
+
+        if ctx.audio_duration is not None and ctx.audio_duration > config.long_audio_threshold:
+            signals.append(Signal.LONG_AUDIO_TURN)
+
         # --- Topic signals ---
-        if config.smart_topics and any(
-            topic.lower() in message_lower for topic in config.smart_topics
+        # Gather all topics from model_topics
+        all_topics: list[str] = []
+        for topics in config.model_topics.values():
+            all_topics.extend(topics)
+        if all_topics and any(
+            topic.lower() in message_lower for topic in all_topics
         ):
             signals.append(Signal.TOPIC_MATCH)
 
@@ -57,4 +70,11 @@ class HeuristicAnalyzer:
     def _match_words(message_lower: str, signal_key: str) -> bool:
         """Return True if any phrase for *signal_key* appears in the message."""
         phrases = SIGNAL_WORDS.get(signal_key, [])
-        return any(phrase in message_lower for phrase in phrases)
+        for phrase in phrases:
+            if " " in phrase:
+                if phrase in message_lower:
+                    return True
+            else:
+                if re.search(r'\b' + re.escape(phrase) + r'\b', message_lower):
+                    return True
+        return False

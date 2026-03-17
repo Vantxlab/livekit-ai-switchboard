@@ -17,6 +17,10 @@ class Signal:
     # Conversation
     INTERRUPTION = "interruption"
 
+    # Voice
+    LOW_STT_CONFIDENCE = "low_stt_confidence"
+    LONG_AUDIO_TURN = "long_audio_turn"
+
     # Topic (developer-defined)
     TOPIC_MATCH = "topic_match"
 
@@ -29,6 +33,8 @@ SIGNAL_WEIGHTS: dict[str, float] = {
     Signal.FRUSTRATION: 0.35,
     Signal.REPEAT_REQUEST: 0.25,
     Signal.INTERRUPTION: 0.20,
+    Signal.LOW_STT_CONFIDENCE: 0.30,
+    Signal.LONG_AUDIO_TURN: 0.15,
     Signal.TOPIC_MATCH: 0.50,
 }
 

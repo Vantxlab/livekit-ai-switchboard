@@ -21,6 +21,10 @@ class Context:
     turns_on_current_model: int = 0
     last_switch_turn: int = -1
 
+    # Voice
+    stt_confidence: float | None = None
+    audio_duration: float | None = None
+
     # Populated by analyzer
     signals_fired: list[str] = field(default_factory=list)
     heuristic_score: float = 0.0

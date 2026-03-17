@@ -1,0 +1,58 @@
+The Concept: Is This a Great Addition to LiveKit Agents?
+
+  The core idea is sound. Cost optimization by routing simple turns to a cheap/fast model and complex turns to an expensive/smart model is a real production
+  concern. For voice agents specifically, latency matters enormously — a 200ms vs 800ms TTFB is the difference between natural and awkward conversation. So the
+  motivation is legitimate.
+
+  However, there are significant conceptual problems:
+
+  1. The fundamental assumption is increasingly wrong
+
+  The gap between "fast" and "smart" models is shrinking rapidly. GPT-4o-mini already handles most conversational turns well. Sonnet already handles almost
+  everything. The cost/quality tradeoff that justifies this library's existence is eroding quarter-by-quarter. By the time this gains adoption, the two-tier
+  split may not be worth the complexity.
+
+  2. Heuristic routing is the wrong abstraction for this problem
+
+  The entire analyzer is keyword matching — "why", "explain", "compare", "no", "confused". This is essentially a bag-of-words classifier from 2005. The
+  problems:
+
+  - "Why" doesn't mean complex. "Why is the sky blue?" is trivial. "Why?" alone as pushback is simple. But "Schedule a meeting for Tuesday" with zero trigger
+  words might actually need reasoning about calendar conflicts.
+  - False positives are catastrophic in voice. A needless escalation to a slower model adds latency mid-conversation. The user didn't ask for "smarter" — they
+  asked for "faster." You're paying a latency tax on a wrong guess.
+  - False negatives are silent failures. A genuinely complex question with no trigger words stays on the fast model and gets a bad answer. The user has no idea
+  routing even exists, so they just think the agent is dumb.
+
+  If you're going to do intent classification, at least use embeddings or a tiny classifier. Keyword matching is too brittle for production.
+
+  3. Voice-specific signals are almost entirely missing
+
+  This is marketed for voice agents, but the only voice-aware signal is record_interruption(), which the developer must call manually. Real voice-specific
+  signals that would actually matter:
+
+  - STT confidence scores (low confidence = mumbled/complex speech)
+  - Turn length in audio seconds (not just word count — pauses matter)
+  - Prosody signals (speaking rate changes, pitch shifts indicating frustration)
+  - Barge-in frequency over a window, not just a single turn
+  - Silence duration before response (user thinking = complex question)
+
+  None of these are used. The routing decisions are based entirely on text, which means this is really a text chat router that happens to be packaged for voice.
+
+  4. Two models is an arbitrary constraint
+
+  Why exactly two? Real production routing might want:
+  - Tiny for "yes", "no", "thanks" (or no LLM call at all — pattern match these)
+  - Fast for simple Q&A
+  - Smart for complex reasoning
+  - Specialized for domain-specific tasks (code, math, medical)
+
+  Hardcoding fast and smart as the only options limits the utility significantly.
+
+  5. No conversation history awareness
+
+  The routing decision is made on the last message only. But conversation complexity is cumulative. A user who has asked 5 increasingly specific follow-up
+  questions is in a complex interaction even if each individual message is short. The system has turn_count and turns_on_current_model but doesn't actually look
+   at conversation trajectory.
+
+  ---

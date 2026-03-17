@@ -23,10 +23,10 @@ from livekit.plugins.openai import LLM
 from ai_switchboard import Switchboard, SwitchboardConfig, SwitchEvent
 
 
-def on_switch(event: SwitchEvent) -> None:
+def on_decision(event: SwitchEvent) -> None:
     marker = ">>>" if event.changed else "   "
     print(
-        f"  {marker} turn={event.turn} model={event.to_model:<5} "
+        f"  {marker} turn={event.turn} model={event.to_model:<8} "
         f"score={event.heuristic_score:.2f} signals={event.signals_fired} "
         f"triggered_by={event.triggered_by}"
     )
@@ -47,12 +47,13 @@ async def main() -> None:
     smart = LLM(model="gpt-4o", api_key=os.environ["OPENAI_API_KEY"])
 
     sb = Switchboard(
-        fast=fast,
-        smart=smart,
+        models={"fast": fast, "smart": smart},
         config=SwitchboardConfig(
             cooldown_turns=1,
-            on_switch=on_switch,
-            smart_topics=["pricing", "refund"],
+            on_decision=on_decision,
+            model_topics={"smart": ["pricing", "refund"]},
+            escalation_model="smart",
+            escalation_threshold=0.6,
         ),
     )
 

@@ -23,10 +23,10 @@ from livekit.plugins.openai import LLM
 from ai_switchboard import Rule, Switchboard, SwitchboardConfig, SwitchEvent
 
 
-def on_switch(event: SwitchEvent) -> None:
+def on_decision(event: SwitchEvent) -> None:
     marker = ">>>" if event.changed else "   "
     print(
-        f"  {marker} model={event.to_model:<5} "
+        f"  {marker} model={event.to_model:<8} "
         f"triggered_by={event.triggered_by} "
         f"score={event.heuristic_score:.2f}"
     )
@@ -62,9 +62,11 @@ async def main() -> None:
     ]
 
     sb = Switchboard(
-        fast=fast,
-        smart=smart,
-        config=SwitchboardConfig(on_switch=on_switch, cooldown_turns=0),
+        models={"fast": fast, "smart": smart},
+        config=SwitchboardConfig(
+            on_decision=on_decision,
+            cooldown_turns=0,
+        ),
         rules=rules,
     )
 

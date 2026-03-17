@@ -1,6 +1,7 @@
-"""Demo — Observability via SwitchEvent callback.
+"""Demo — Observability via SwitchEvent callbacks.
 
 Shows how to capture every routing decision for logging, metrics, or analytics.
+Demonstrates the difference between on_switch (changes only) and on_decision (every turn).
 
 Run:  python examples/demo_events.py
 
@@ -25,11 +26,8 @@ from livekit.plugins.openai import LLM
 from ai_switchboard import Switchboard, SwitchboardConfig, SwitchEvent
 
 
-events_log: list[SwitchEvent] = []
-
-
-def collect_event(event: SwitchEvent) -> None:
-    events_log.append(event)
+switch_log: list[SwitchEvent] = []
+decision_log: list[SwitchEvent] = []
 
 
 async def ask(sb: Switchboard, text: str) -> str:
@@ -47,10 +45,11 @@ async def main() -> None:
     smart = LLM(model="gpt-4o", api_key=os.environ["OPENAI_API_KEY"])
 
     sb = Switchboard(
-        fast=fast,
-        smart=smart,
+        models={"fast": fast, "smart": smart},
         config=SwitchboardConfig(
-            on_switch=collect_event,
+            on_switch=switch_log.append,
+            on_decision=decision_log.append,
+            model_topics={"smart": ["pricing"]},
             cooldown_turns=1,
         ),
     )
@@ -58,7 +57,7 @@ async def main() -> None:
     messages = [
         "Hi!",
         "What's 2+2?",
-        "No, that's wrong. Can you explain why step by step? How does arithmetic work?",
+        "Tell me about pricing",
         "ok got it",
         "thanks bye",
     ]
@@ -70,9 +69,9 @@ async def main() -> None:
         print(f"  -> {sb.current_model}: {reply[:80]}...\n")
 
     print("=" * 60)
-    print("Event log summary:")
+    print("Decision log (every turn):")
     print("=" * 60)
-    for e in events_log:
+    for e in decision_log:
         status = "SWITCHED" if e.changed else "stayed"
         print(
             f"  turn {e.turn}: {e.from_model:>5} -> {e.to_model:<5} "
@@ -80,8 +79,7 @@ async def main() -> None:
             f"signals={e.signals_fired}"
         )
 
-    switches = sum(1 for e in events_log if e.changed)
-    print(f"\nTotal turns: {len(events_log)}, model switches: {switches}")
+    print(f"\nTotal turns: {len(decision_log)}, model switches: {len(switch_log)}")
 
 
 if __name__ == "__main__":

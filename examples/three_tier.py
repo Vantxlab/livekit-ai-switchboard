@@ -1,7 +1,7 @@
-"""Full configuration — voice thresholds, callbacks, and logging.
+"""Level 2 — Three-tier routing with topics and heuristic escalation.
 
-Shows all config options including voice signal thresholds,
-both callbacks (on_switch + on_decision), and decision logging.
+Three models (fast / standard / premium) with declarative topic routing
+and automatic heuristic escalation for frustration and complexity.
 """
 
 from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli
@@ -13,16 +13,11 @@ from ai_switchboard import Switchboard, SwitchboardConfig, SwitchEvent
 
 def log_switch(event: SwitchEvent) -> None:
     print(
-        f"[SWITCH] turn {event.turn}: "
+        f"[switchboard] turn {event.turn}: "
         f"{event.from_model} -> {event.to_model} "
-        f"(triggered_by={event.triggered_by})"
-    )
-
-
-def log_decision(event: SwitchEvent) -> None:
-    print(
-        f"[decision] turn {event.turn}: model={event.to_model} "
-        f"score={event.heuristic_score:.2f} signals={event.signals_fired}"
+        f"(score={event.heuristic_score:.2f}, "
+        f"signals={event.signals_fired}, "
+        f"triggered_by={event.triggered_by})"
     )
 
 
@@ -35,18 +30,19 @@ async def entrypoint(ctx: JobContext):
         llm=Switchboard(
             models={
                 "fast": groq.LLM(model="llama-3.3-70b-versatile"),
-                "smart": openai.LLM(model="gpt-4o"),
+                "standard": openai.LLM(model="gpt-4o-mini"),
+                "premium": openai.LLM(model="gpt-4o"),
             },
             config=SwitchboardConfig(
-                model_topics={"smart": ["pricing", "warranty", "complaint"]},
-                escalation_model="smart",
-                escalation_threshold=0.5,
-                cooldown_turns=3,
-                stt_confidence_threshold=0.7,
-                long_audio_threshold=10.0,
+                default_model="fast",
+                model_topics={
+                    "premium": ["pricing", "billing", "legal"],
+                    "standard": ["complaint", "support"],
+                },
+                escalation_model="premium",
+                escalation_threshold=0.6,
+                cooldown_turns=2,
                 on_switch=log_switch,
-                on_decision=log_decision,
-                log_decisions=True,
             ),
         ),
         tts=openai.TTS(),

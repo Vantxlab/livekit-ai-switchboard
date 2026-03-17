@@ -16,11 +16,17 @@ class TestRuleDataclass:
     def test_defaults(self):
         rule = Rule(name="test", condition=lambda ctx: True, use="smart")
         assert rule.priority == 5
-        assert rule.sticky is False
 
     def test_custom_priority(self):
         rule = Rule(name="test", condition=lambda ctx: True, use="smart", priority=10)
         assert rule.priority == 10
+
+    def test_use_accepts_any_string(self):
+        rule = Rule(name="test", condition=lambda ctx: True, use="premium")
+        assert rule.use == "premium"
+
+        rule2 = Rule(name="test2", condition=lambda ctx: True, use="my-custom-model")
+        assert rule2.use == "my-custom-model"
 
 
 class TestRuleSorting:

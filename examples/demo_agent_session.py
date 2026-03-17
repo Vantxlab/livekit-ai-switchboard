@@ -29,7 +29,7 @@ from livekit.plugins.openai import LLM
 from ai_switchboard import Switchboard, SwitchboardConfig, SwitchEvent
 
 
-def on_switch(event: SwitchEvent) -> None:
+def on_decision(event: SwitchEvent) -> None:
     marker = "SWITCHED" if event.changed else "stayed"
     print(
         f"  [{marker}] model={event.to_model} "
@@ -42,9 +42,14 @@ async def main() -> None:
     smart = LLM(model="gpt-4o", api_key=os.environ["OPENAI_API_KEY"])
 
     sb = Switchboard(
-        fast=fast,
-        smart=smart,
-        config=SwitchboardConfig(cooldown_turns=1, on_switch=on_switch),
+        models={"fast": fast, "smart": smart},
+        config=SwitchboardConfig(
+            cooldown_turns=1,
+            on_decision=on_decision,
+            model_topics={"smart": ["pricing"]},
+            escalation_model="smart",
+            escalation_threshold=0.6,
+        ),
     )
 
     conversation = [

@@ -23,9 +23,17 @@ pytestmark = [pytest.mark.integration, skip_no_openai]
 INSTRUCTIONS = "You are a helpful assistant. Keep responses very brief."
 
 
+def _make_sb(fast_llm, smart_llm, **kwargs):
+    """Build a Switchboard with the new models= API."""
+    return Switchboard(
+        models={"fast": fast_llm, "smart": smart_llm},
+        **kwargs,
+    )
+
+
 class TestAgentSessionRouting:
-    async def test_simple_chat_stays_fast(self, fast_llm, smart_llm):
-        sb = Switchboard(fast=fast_llm, smart=smart_llm)
+    async def test_simple_chat_stays_default(self, fast_llm, smart_llm):
+        sb = _make_sb(fast_llm, smart_llm)
 
         async with AgentSession() as session:
             await session.start(Agent(instructions=INSTRUCTIONS, llm=sb))
@@ -35,34 +43,36 @@ class TestAgentSessionRouting:
             result.expect.no_more_events()
             assert sb.current_model == "fast"
 
-    async def test_complex_message_escalates_to_smart(self, fast_llm, smart_llm):
-        sb = Switchboard(fast=fast_llm, smart=smart_llm)
-
-        async with AgentSession() as session:
-            await session.start(Agent(instructions=INSTRUCTIONS, llm=sb))
-
-            result = await session.run(
-                user_input=(
-                    "No, that's wrong. Can you explain why this happens? "
-                    "And how does it compare to the alternative?"
-                )
-            )
-            result.expect.next_event().is_message(role="assistant")
-            result.expect.no_more_events()
-            assert sb.current_model == "smart"
-
-    async def test_escalation_then_deescalation(self, fast_llm, smart_llm):
-        sb = Switchboard(
-            fast=fast_llm,
-            smart=smart_llm,
-            config=SwitchboardConfig(cooldown_turns=1),
+    async def test_topic_escalates(self, fast_llm, smart_llm):
+        sb = _make_sb(
+            fast_llm, smart_llm,
+            config=SwitchboardConfig(
+                model_topics={"smart": ["pricing"]},
+            ),
         )
 
         async with AgentSession() as session:
             await session.start(Agent(instructions=INSTRUCTIONS, llm=sb))
 
-            # Escalate
-            result = await session.run(user_input="No, that's wrong. Why? How?")
+            result = await session.run(user_input="Tell me about pricing")
+            result.expect.next_event().is_message(role="assistant")
+            result.expect.no_more_events()
+            assert sb.current_model == "smart"
+
+    async def test_escalation_then_deescalation(self, fast_llm, smart_llm):
+        sb = _make_sb(
+            fast_llm, smart_llm,
+            config=SwitchboardConfig(
+                model_topics={"smart": ["pricing"]},
+                cooldown_turns=1,
+            ),
+        )
+
+        async with AgentSession() as session:
+            await session.start(Agent(instructions=INSTRUCTIONS, llm=sb))
+
+            # Escalate via topic
+            result = await session.run(user_input="Tell me about pricing")
             result.expect.next_event().is_message(role="assistant")
             result.expect.no_more_events()
             assert sb.current_model == "smart"
@@ -85,7 +95,7 @@ class TestAgentSessionRouting:
             use="smart",
             priority=10,
         )
-        sb = Switchboard(fast=fast_llm, smart=smart_llm, rules=[rule])
+        sb = _make_sb(fast_llm, smart_llm, rules=[rule])
 
         async with AgentSession() as session:
             await session.start(Agent(instructions=INSTRUCTIONS, llm=sb))
@@ -97,10 +107,12 @@ class TestAgentSessionRouting:
 
     async def test_switch_event_callback_fires(self, fast_llm, smart_llm):
         events: list[SwitchEvent] = []
-        sb = Switchboard(
-            fast=fast_llm,
-            smart=smart_llm,
-            config=SwitchboardConfig(on_switch=events.append),
+        sb = _make_sb(
+            fast_llm, smart_llm,
+            config=SwitchboardConfig(
+                on_decision=events.append,
+                model_topics={"smart": ["pricing"]},
+            ),
         )
 
         async with AgentSession() as session:
@@ -114,10 +126,8 @@ class TestAgentSessionRouting:
             assert events[0].to_model == "fast"
             assert events[0].changed is False
 
-            # Complex message — escalates
-            result = await session.run(
-                user_input="No that's wrong. Can you explain why? How does this compare?"
-            )
+            # Topic match — escalates
+            result = await session.run(user_input="Tell me about pricing")
             result.expect.next_event().is_message(role="assistant")
             result.expect.no_more_events()
             assert len(events) == 2

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Callable
 
 from .context import Context
 
@@ -12,6 +12,5 @@ class Rule:
 
     name: str
     condition: Callable[[Context], bool]
-    use: Literal["fast", "smart"]
+    use: str
     priority: int = 5
-    sticky: bool = False
