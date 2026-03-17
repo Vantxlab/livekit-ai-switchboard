@@ -196,6 +196,148 @@ class TestSubstringFix:
         assert Signal.PUSHBACK in ctx.signals_fired
 
 
+class TestMultiWordBoundary:
+    """#1 — Multi-word phrases use word boundaries, not bare substring."""
+
+    def test_walk_me_through_fires(self):
+        ctx = _analyze("Can you walk me through the process?")
+        assert Signal.COMPLEXITY_WORDS in ctx.signals_fired
+
+    def test_walk_me_through_not_embedded(self):
+        """'sidewalk me through' should not trigger (word boundary)."""
+        ctx = _analyze("The sidewalk met hrough the park")
+        assert Signal.COMPLEXITY_WORDS not in ctx.signals_fired
+
+    def test_what_if_fires(self):
+        ctx = _analyze("What if we try a different approach?")
+        assert Signal.COMPLEXITY_WORDS in ctx.signals_fired
+
+    def test_what_if_extra_whitespace(self):
+        """Multi-word phrase with extra whitespace should still match."""
+        ctx = _analyze("What  if we do it differently?")
+        assert Signal.COMPLEXITY_WORDS in ctx.signals_fired
+
+    def test_how_does_fires(self):
+        ctx = _analyze("How does this work?")
+        assert Signal.COMPLEXITY_WORDS in ctx.signals_fired
+
+    def test_not_what_i_fires(self):
+        ctx = _analyze("That's not what I asked for")
+        assert Signal.PUSHBACK in ctx.signals_fired
+
+    def test_say_that_again_fires(self):
+        ctx = _analyze("Can you say that again?")
+        assert Signal.REPEAT_REQUEST in ctx.signals_fired
+
+    def test_i_already_fires(self):
+        ctx = _analyze("I already told you my name")
+        assert Signal.PUSHBACK in ctx.signals_fired
+
+
+class TestTopicWordBoundary:
+    """#1 — Topic matching uses word boundaries."""
+
+    def test_topic_exact_word_fires(self):
+        ctx = _analyze(
+            "Tell me about pricing",
+            model_topics={"premium": ["pricing"]},
+        )
+        assert Signal.TOPIC_MATCH in ctx.signals_fired
+
+    def test_topic_substring_does_not_fire(self):
+        """'repricing' should not match topic 'pricing'."""
+        ctx = _analyze(
+            "The repricing strategy is interesting",
+            model_topics={"premium": ["pricing"]},
+        )
+        assert Signal.TOPIC_MATCH not in ctx.signals_fired
+
+    def test_multi_word_topic_fires(self):
+        ctx = _analyze(
+            "I need help with my credit card",
+            model_topics={"premium": ["credit card"]},
+        )
+        assert Signal.TOPIC_MATCH in ctx.signals_fired
+
+    def test_multi_word_topic_substring_no_fire(self):
+        """'discredit card' should not match 'credit card'."""
+        ctx = _analyze(
+            "They discredit card companies often",
+            model_topics={"premium": ["credit card"]},
+        )
+        assert Signal.TOPIC_MATCH not in ctx.signals_fired
+
+
+class TestPrecompiledRegex:
+    """#6 — Verify patterns are pre-compiled at init, not rebuilt per call."""
+
+    def test_analyzer_has_compiled_patterns(self):
+        from ai_switchboard.analyzer import HeuristicAnalyzer
+
+        analyzer = HeuristicAnalyzer()
+        assert hasattr(analyzer, "_compiled")
+        assert Signal.PUSHBACK in analyzer._compiled
+        assert Signal.FRUSTRATION in analyzer._compiled
+        assert Signal.COMPLEXITY_WORDS in analyzer._compiled
+        assert Signal.REPEAT_REQUEST in analyzer._compiled
+
+    def test_compiled_pattern_is_reused(self):
+        """Same analyzer instance reuses compiled patterns across calls."""
+        import re
+
+        from ai_switchboard.analyzer import HeuristicAnalyzer
+
+        analyzer = HeuristicAnalyzer()
+        pattern = analyzer._compiled[Signal.PUSHBACK]
+        assert isinstance(pattern, re.Pattern)
+        # Call analyze twice — pattern object identity should be stable
+        config = SwitchboardConfig()
+        ctx1 = _make_ctx("No, that's wrong")
+        analyzer.analyze(ctx1, config)
+        assert analyzer._compiled[Signal.PUSHBACK] is pattern
+
+
+class TestConfigurableWeights:
+    """#4 — Signal weights can be overridden via SwitchboardConfig."""
+
+    def test_default_weights_unchanged(self):
+        ctx = _analyze("No, that's wrong")
+        # Default pushback weight is 0.40
+        assert ctx.heuristic_score >= 0.40
+
+    def test_custom_weight_override(self):
+        analyzer = HeuristicAnalyzer()
+        config = SwitchboardConfig(
+            signal_weights={Signal.PUSHBACK: 0.10},
+        )
+        ctx = _make_ctx("No, that's wrong")
+        analyzer.analyze(ctx, config)
+        # With pushback weight lowered to 0.10
+        assert 0.09 <= ctx.heuristic_score <= 0.11
+
+    def test_custom_weight_for_new_signal(self):
+        """Custom weights can add new signal keys (for future extensibility)."""
+        analyzer = HeuristicAnalyzer()
+        config = SwitchboardConfig(
+            signal_weights={"custom_signal": 0.50},
+        )
+        ctx = _make_ctx("Hello")
+        analyzer.analyze(ctx, config)
+        # No custom signal detected, so score is still 0
+        assert ctx.heuristic_score == 0.0
+
+    def test_partial_override_preserves_defaults(self):
+        """Overriding one weight preserves all others."""
+        analyzer = HeuristicAnalyzer()
+        config = SwitchboardConfig(
+            signal_weights={Signal.PUSHBACK: 0.10},
+        )
+        # frustration (default 0.35) + pushback (overridden 0.10) = 0.45
+        ctx = _make_ctx("No, that's wrong. I don't understand.")
+        analyzer.analyze(ctx, config)
+        assert 0.44 <= ctx.heuristic_score <= 0.46
+
+
 class TestScoring:
     def test_empty_message_zero_score(self):
         ctx = _analyze("")

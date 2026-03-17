@@ -10,6 +10,21 @@ from .signal import SIGNAL_WEIGHTS, SIGNAL_WORDS, Signal
 class HeuristicAnalyzer:
     """Scores a conversation turn by detecting heuristic signals."""
 
+    def __init__(self) -> None:
+        # Pre-compile one regex per signal key for word-boundary matching.
+        self._compiled: dict[str, re.Pattern[str]] = {}
+        for signal_key, phrases in SIGNAL_WORDS.items():
+            parts: list[str] = []
+            for phrase in phrases:
+                words = phrase.split()
+                if len(words) == 1:
+                    parts.append(r"\b" + re.escape(phrase) + r"\b")
+                else:
+                    # Multi-word: join with flexible whitespace, word boundaries
+                    escaped = r"\s+".join(re.escape(w) for w in words)
+                    parts.append(r"\b" + escaped + r"\b")
+            self._compiled[signal_key] = re.compile("|".join(parts), re.IGNORECASE)
+
     def analyze(self, ctx: Context, config: SwitchboardConfig) -> Context:
         """Detect signals and compute a weighted heuristic score.
 
@@ -18,6 +33,11 @@ class HeuristicAnalyzer:
         """
         signals: list[str] = []
         message_lower = ctx.last_message.lower()
+
+        # Resolve effective weights
+        weights = SIGNAL_WEIGHTS
+        if config.signal_weights:
+            weights = {**SIGNAL_WEIGHTS, **config.signal_weights}
 
         # --- Complexity signals ---
         if ctx.last_message_word_count > 25:
@@ -57,28 +77,35 @@ class HeuristicAnalyzer:
             signals.append(Signal.LONG_AUDIO_TURN)
 
         # --- Topic signals ---
-        # Gather all topics from model_topics
         all_topics: list[str] = []
         for topics in config.model_topics.values():
             all_topics.extend(topics)
-        if all_topics and any(topic.lower() in message_lower for topic in all_topics):
+        if all_topics and self._match_topic(message_lower, all_topics):
             signals.append(Signal.TOPIC_MATCH)
 
         # Compute score
-        score = sum(SIGNAL_WEIGHTS.get(s, 0.0) for s in signals)
+        score = sum(weights.get(s, 0.0) for s in signals)
         ctx.signals_fired = signals
         ctx.heuristic_score = min(score, 1.0)
         return ctx
 
-    @staticmethod
-    def _match_words(message_lower: str, signal_key: str) -> bool:
+    def _match_words(self, message_lower: str, signal_key: str) -> bool:
         """Return True if any phrase for *signal_key* appears in the message."""
-        phrases = SIGNAL_WORDS.get(signal_key, [])
-        for phrase in phrases:
-            if " " in phrase:
-                if phrase in message_lower:
+        pattern = self._compiled.get(signal_key)
+        if pattern is None:
+            return False
+        return pattern.search(message_lower) is not None
+
+    @staticmethod
+    def _match_topic(message_lower: str, topics: list[str]) -> bool:
+        """Return True if any topic matches with word boundaries."""
+        for topic in topics:
+            words = topic.lower().split()
+            if len(words) == 1:
+                if re.search(r"\b" + re.escape(topic.lower()) + r"\b", message_lower):
                     return True
             else:
-                if re.search(r"\b" + re.escape(phrase) + r"\b", message_lower):
+                escaped = r"\s+".join(re.escape(w) for w in words)
+                if re.search(r"\b" + escaped + r"\b", message_lower):
                     return True
         return False

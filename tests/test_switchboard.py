@@ -510,3 +510,371 @@ class TestValidation:
         rule = Rule(name="bad", condition=lambda ctx: True, use="nonexistent")
         with pytest.raises(ValueError, match="Rule"):
             Switchboard(models=models, rules=[rule])
+
+    def test_invalid_timeout_fallback_model(self):
+        import pytest
+
+        models = _make_models()
+        with pytest.raises(ValueError, match="timeout_fallback_model"):
+            Switchboard(
+                models=models,
+                config=SwitchboardConfig(timeout_fallback_model="nonexistent"),
+            )
+
+
+class TestMinSignalsForEscalation:
+    """#7 — min_signals_for_escalation gates heuristic escalation."""
+
+    def test_single_signal_blocked_when_min_is_two(self):
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                escalation_model="premium",
+                escalation_threshold=0.3,
+                min_signals_for_escalation=2,
+            ),
+        )
+        # pushback alone (0.40 >= 0.3 threshold) but only 1 signal
+        _chat(sb, "No, that's wrong")
+        assert sb.current_model == "fast"
+
+    def test_two_signals_pass_when_min_is_two(self):
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                escalation_model="premium",
+                escalation_threshold=0.3,
+                min_signals_for_escalation=2,
+            ),
+        )
+        # pushback (0.40) + multi_question (0.30) = 0.70, 2 signals
+        _chat(sb, "No, that's wrong. Why? How?")
+        assert sb.current_model == "premium"
+
+    def test_default_min_is_one(self):
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                escalation_model="premium",
+                escalation_threshold=0.3,
+            ),
+        )
+        # Single signal should escalate with default min=1
+        _chat(sb, "No, that's wrong")
+        assert sb.current_model == "premium"
+
+    def test_topic_routing_bypasses_min_signals(self):
+        """Topic routing is not gated by min_signals_for_escalation."""
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                model_topics={"premium": ["pricing"]},
+                min_signals_for_escalation=99,
+            ),
+        )
+        _chat(sb, "Tell me about pricing")
+        assert sb.current_model == "premium"
+
+    def test_rules_bypass_min_signals(self):
+        models = _make_models()
+        rule = Rule(
+            name="force_premium",
+            condition=lambda ctx: "vip" in ctx.last_message.lower(),
+            use="premium",
+            priority=10,
+        )
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                min_signals_for_escalation=99,
+            ),
+            rules=[rule],
+        )
+        _chat(sb, "I am a VIP customer")
+        assert sb.current_model == "premium"
+
+
+class TestRecentMessages:
+    """#2 — Sliding window of recent user messages."""
+
+    def test_recent_messages_populated(self):
+        events: list[SwitchEvent] = []
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                on_decision=events.append,
+                context_window_size=3,
+            ),
+        )
+        _chat(sb, "Hello")
+        _chat(sb, "How are you")
+        _chat(sb, "Fine thanks")
+        assert list(sb._recent_messages) == ["Hello", "How are you", "Fine thanks"]
+
+    def test_window_trims_old_messages(self):
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(context_window_size=2),
+        )
+        _chat(sb, "First")
+        _chat(sb, "Second")
+        _chat(sb, "Third")
+        assert list(sb._recent_messages) == ["Second", "Third"]
+
+    def test_reset_clears_recent_messages(self):
+        models = _make_models()
+        sb = Switchboard(models=models)
+        _chat(sb, "Hello")
+        assert len(sb._recent_messages) > 0
+        sb.reset()
+        assert len(sb._recent_messages) == 0
+
+    def test_rule_can_access_recent_messages(self):
+        """Rules can use ctx.recent_messages to detect repetition."""
+        models = _make_models()
+
+        def repeated_question(ctx):
+            if len(ctx.recent_messages) >= 2:
+                return ctx.recent_messages[-1] == ctx.recent_messages[-2]
+            return False
+
+        rule = Rule(
+            name="repeat_detector",
+            condition=repeated_question,
+            use="premium",
+            priority=10,
+        )
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(context_window_size=5),
+            rules=[rule],
+        )
+        _chat(sb, "What is the price?")
+        assert sb.current_model == "fast"
+        _chat(sb, "What is the price?")
+        assert sb.current_model == "premium"
+
+
+class TestChatCtxInContext:
+    """#8 — Rules can access chat_ctx via Context."""
+
+    def test_chat_ctx_passed_to_rules(self):
+        received_ctx = []
+
+        def capture_rule(ctx):
+            received_ctx.append(ctx)
+            return False
+
+        models = _make_models()
+        rule = Rule(name="capture", condition=capture_rule, use="premium", priority=10)
+        sb = Switchboard(models=models, rules=[rule])
+
+        chat_ctx = _make_chat_ctx([("user", "Hello")])
+        sb.chat(chat_ctx=chat_ctx)
+
+        assert len(received_ctx) == 1
+        assert received_ctx[0].chat_ctx is chat_ctx
+
+    def test_rule_inspects_assistant_messages(self):
+        """Rule can inspect previous assistant messages via chat_ctx."""
+        models = _make_models()
+
+        def after_tool_call(ctx):
+            if ctx.chat_ctx is None:
+                return False
+            msgs = ctx.chat_ctx.messages
+            for msg in msgs:
+                if msg.role == "assistant" and "scheduled" in (
+                    msg.text_content or ""
+                ).lower():
+                    return True
+            return False
+
+        rule = Rule(
+            name="post_tool",
+            condition=after_tool_call,
+            use="fast",
+            priority=10,
+        )
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(model_topics={"premium": ["pricing"]}),
+            rules=[rule],
+        )
+        # Chat context with assistant message containing "scheduled"
+        chat_ctx = _make_chat_ctx(
+            [
+                ("user", "Schedule my appointment"),
+                ("assistant", "I've scheduled your appointment for 3pm"),
+                ("user", "Tell me about pricing"),
+            ]
+        )
+        sb.chat(chat_ctx=chat_ctx)
+        # Rule fires and forces fast, even though topic would pick premium
+        assert sb.current_model == "fast"
+
+
+class TestLatencyAwareRouting:
+    """#3 — TTFB tracking and auto-demotion."""
+
+    def test_no_ttfb_data_no_demotion(self):
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                model_topics={"premium": ["pricing"]},
+                max_ttfb_ms={"premium": 500.0},
+                timeout_fallback_model="fast",
+            ),
+        )
+        # No TTFB recorded — should route normally
+        _chat(sb, "Tell me about pricing")
+        assert sb.current_model == "premium"
+
+    def test_low_ttfb_no_demotion(self):
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                model_topics={"premium": ["pricing"]},
+                max_ttfb_ms={"premium": 500.0},
+                timeout_fallback_model="fast",
+            ),
+        )
+        # Record fast TTFB
+        for _ in range(5):
+            sb.record_ttfb("premium", 200.0)
+        _chat(sb, "Tell me about pricing")
+        assert sb.current_model == "premium"
+
+    def test_high_ttfb_demotes_to_fallback(self):
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                model_topics={"premium": ["pricing"]},
+                max_ttfb_ms={"premium": 500.0},
+                timeout_fallback_model="fast",
+            ),
+        )
+        # Record slow TTFB
+        for _ in range(5):
+            sb.record_ttfb("premium", 800.0)
+        _chat(sb, "Tell me about pricing")
+        assert sb.current_model == "fast"
+
+    def test_ttfb_rolling_window(self):
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                model_topics={"premium": ["pricing"]},
+                max_ttfb_ms={"premium": 500.0},
+                timeout_fallback_model="fast",
+                ttfb_window_size=3,
+            ),
+        )
+        # Old slow samples
+        sb.record_ttfb("premium", 900.0)
+        sb.record_ttfb("premium", 900.0)
+        sb.record_ttfb("premium", 900.0)
+        # New fast samples push old ones out of the window
+        sb.record_ttfb("premium", 100.0)
+        sb.record_ttfb("premium", 100.0)
+        sb.record_ttfb("premium", 100.0)
+        _chat(sb, "Tell me about pricing")
+        # avg is 100.0, under threshold
+        assert sb.current_model == "premium"
+
+    def test_rules_bypass_ttfb_demotion(self):
+        models = _make_models()
+        rule = Rule(
+            name="force_premium",
+            condition=lambda ctx: "vip" in ctx.last_message.lower(),
+            use="premium",
+            priority=10,
+        )
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                max_ttfb_ms={"premium": 500.0},
+                timeout_fallback_model="fast",
+            ),
+            rules=[rule],
+        )
+        for _ in range(5):
+            sb.record_ttfb("premium", 800.0)
+        _chat(sb, "I am a VIP")
+        assert sb.current_model == "premium"
+
+    def test_ttfb_event_triggered_by(self):
+        events: list[SwitchEvent] = []
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                model_topics={"premium": ["pricing"]},
+                max_ttfb_ms={"premium": 500.0},
+                timeout_fallback_model="fast",
+                on_decision=events.append,
+            ),
+        )
+        for _ in range(5):
+            sb.record_ttfb("premium", 800.0)
+        _chat(sb, "Tell me about pricing")
+        assert events[0].triggered_by == "ttfb_fallback"
+
+    def test_reset_clears_ttfb(self):
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                model_topics={"premium": ["pricing"]},
+                max_ttfb_ms={"premium": 500.0},
+                timeout_fallback_model="fast",
+            ),
+        )
+        for _ in range(5):
+            sb.record_ttfb("premium", 800.0)
+        sb.reset()
+        # After reset, no TTFB data — should route normally
+        _chat(sb, "Tell me about pricing")
+        assert sb.current_model == "premium"
+
+
+class TestConfigurableWeightsRouting:
+    """#4 — Signal weights affect routing decisions end-to-end."""
+
+    def test_lowered_weight_prevents_escalation(self):
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                escalation_model="premium",
+                escalation_threshold=0.6,
+                signal_weights={"pushback": 0.05, "multi_question": 0.05},
+            ),
+        )
+        # pushback + multi_question normally = 0.70, but overridden to 0.10
+        _chat(sb, "No, that's wrong. Why? How?")
+        assert sb.current_model == "fast"
+
+    def test_raised_weight_triggers_escalation(self):
+        models = _make_models()
+        sb = Switchboard(
+            models=models,
+            config=SwitchboardConfig(
+                escalation_model="premium",
+                escalation_threshold=0.6,
+                signal_weights={"frustration": 0.70},
+            ),
+        )
+        # frustration alone with weight 0.70 >= 0.6 threshold
+        _chat(sb, "I don't understand what you're saying")
+        assert sb.current_model == "premium"
