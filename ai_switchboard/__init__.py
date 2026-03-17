@@ -3,6 +3,7 @@
 from .config import SwitchboardConfig
 from .context import Context
 from .events import SwitchEvent
+from .metrics import SwitchboardMetrics
 from .rule import Rule
 from .signal import Signal
 from .switchboard import Switchboard
@@ -10,6 +11,7 @@ from .switchboard import Switchboard
 __all__ = [
     "Switchboard",
     "SwitchboardConfig",
+    "SwitchboardMetrics",
     "Context",
     "Rule",
     "Signal",

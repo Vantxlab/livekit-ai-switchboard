@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -11,6 +12,9 @@ class Context:
     last_message: str = ""
     last_message_word_count: int = 0
     turn_count: int = 0
+
+    # Recent user messages (sliding window, most recent last)
+    recent_messages: list[str] = field(default_factory=list)
 
     # Conversation health
     interruption_count: int = 0
@@ -24,6 +28,9 @@ class Context:
     # Voice
     stt_confidence: float | None = None
     audio_duration: float | None = None
+
+    # Full chat context (for rules that need tool calls, assistant history, etc.)
+    chat_ctx: Any | None = None
 
     # Populated by analyzer
     signals_fired: list[str] = field(default_factory=list)
