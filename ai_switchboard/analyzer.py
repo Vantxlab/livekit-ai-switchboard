@@ -44,10 +44,16 @@ class HeuristicAnalyzer:
             signals.append(Signal.INTERRUPTION)
 
         # --- Voice signals ---
-        if ctx.stt_confidence is not None and ctx.stt_confidence < config.stt_confidence_threshold:
+        if (
+            ctx.stt_confidence is not None
+            and ctx.stt_confidence < config.stt_confidence_threshold
+        ):
             signals.append(Signal.LOW_STT_CONFIDENCE)
 
-        if ctx.audio_duration is not None and ctx.audio_duration > config.long_audio_threshold:
+        if (
+            ctx.audio_duration is not None
+            and ctx.audio_duration > config.long_audio_threshold
+        ):
             signals.append(Signal.LONG_AUDIO_TURN)
 
         # --- Topic signals ---
@@ -55,9 +61,7 @@ class HeuristicAnalyzer:
         all_topics: list[str] = []
         for topics in config.model_topics.values():
             all_topics.extend(topics)
-        if all_topics and any(
-            topic.lower() in message_lower for topic in all_topics
-        ):
+        if all_topics and any(topic.lower() in message_lower for topic in all_topics):
             signals.append(Signal.TOPIC_MATCH)
 
         # Compute score
@@ -75,6 +79,6 @@ class HeuristicAnalyzer:
                 if phrase in message_lower:
                     return True
             else:
-                if re.search(r'\b' + re.escape(phrase) + r'\b', message_lower):
+                if re.search(r"\b" + re.escape(phrase) + r"\b", message_lower):
                     return True
         return False

@@ -22,7 +22,7 @@ The `Switchboard` is a drop-in [`llm.LLM`](https://docs.livekit.io/agents/) repl
 pip install livekit-ai-switchboard
 ```
 
-> **Requires** Python 3.9+ and `livekit-agents >= 1.0`
+> **Requires** Python 3.10+ and `livekit-agents >= 1.0`
 
 ## Quick Start
 

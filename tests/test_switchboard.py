@@ -82,6 +82,7 @@ class TestBasicRouting:
 
     def test_requires_at_least_two_models(self):
         import pytest
+
         with pytest.raises(ValueError, match="at least 2"):
             Switchboard(models={"solo": _make_mock_llm()})
 
@@ -269,8 +270,15 @@ class TestRuleOverride:
     def test_higher_priority_rule_wins(self):
         models = _make_models()
         rules = [
-            Rule(name="always_premium", condition=lambda ctx: True, use="premium", priority=1),
-            Rule(name="always_fast", condition=lambda ctx: True, use="fast", priority=10),
+            Rule(
+                name="always_premium",
+                condition=lambda ctx: True,
+                use="premium",
+                priority=1,
+            ),
+            Rule(
+                name="always_fast", condition=lambda ctx: True, use="fast", priority=10
+            ),
         ]
         sb = Switchboard(models=models, rules=rules)
         _chat(sb, "hello")
@@ -467,6 +475,7 @@ class TestInterruption:
 class TestValidation:
     def test_invalid_default_model(self):
         import pytest
+
         models = _make_models()
         with pytest.raises(ValueError, match="default_model"):
             Switchboard(
@@ -476,6 +485,7 @@ class TestValidation:
 
     def test_invalid_escalation_model(self):
         import pytest
+
         models = _make_models()
         with pytest.raises(ValueError, match="escalation_model"):
             Switchboard(
@@ -485,6 +495,7 @@ class TestValidation:
 
     def test_invalid_model_topics_key(self):
         import pytest
+
         models = _make_models()
         with pytest.raises(ValueError, match="model_topics"):
             Switchboard(
@@ -494,6 +505,7 @@ class TestValidation:
 
     def test_invalid_rule_use(self):
         import pytest
+
         models = _make_models()
         rule = Rule(name="bad", condition=lambda ctx: True, use="nonexistent")
         with pytest.raises(ValueError, match="Rule"):

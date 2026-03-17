@@ -53,7 +53,8 @@ class Switchboard(llm.LLM):
 
         # Resolve default_model
         self._default_model: str = (
-            self._config.default_model if self._config.default_model
+            self._config.default_model
+            if self._config.default_model
             else self._model_order[0]
         )
 
@@ -161,7 +162,7 @@ class Switchboard(llm.LLM):
         for msg in reversed(items):
             if msg.role == "user":
                 last_text = msg.text_content or ""
-                stt_confidence = getattr(msg, 'transcript_confidence', None)
+                stt_confidence = getattr(msg, "transcript_confidence", None)
                 break
 
         # 2. Build context
@@ -194,7 +195,9 @@ class Switchboard(llm.LLM):
             try:
                 matched = rule.condition(ctx)
             except Exception:
-                logger.warning("Rule %r raised an exception, skipping", rule.name, exc_info=True)
+                logger.warning(
+                    "Rule %r raised an exception, skipping", rule.name, exc_info=True
+                )
                 continue
             if matched:
                 target = rule.use
@@ -208,7 +211,9 @@ class Switchboard(llm.LLM):
             message_lower = ctx.last_message.lower()
             for model_name, topics in self._config.model_topics.items():
                 if any(t.lower() in message_lower for t in topics):
-                    if topic_target is None or self._model_tier(model_name) > self._model_tier(topic_target):
+                    if topic_target is None or self._model_tier(
+                        model_name
+                    ) > self._model_tier(topic_target):
                         topic_target = model_name
 
             # 7. Evaluate heuristic escalation

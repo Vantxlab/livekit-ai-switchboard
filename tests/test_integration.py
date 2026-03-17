@@ -45,7 +45,8 @@ class TestAgentSessionRouting:
 
     async def test_topic_escalates(self, fast_llm, smart_llm):
         sb = _make_sb(
-            fast_llm, smart_llm,
+            fast_llm,
+            smart_llm,
             config=SwitchboardConfig(
                 model_topics={"smart": ["pricing"]},
             ),
@@ -61,7 +62,8 @@ class TestAgentSessionRouting:
 
     async def test_escalation_then_deescalation(self, fast_llm, smart_llm):
         sb = _make_sb(
-            fast_llm, smart_llm,
+            fast_llm,
+            smart_llm,
             config=SwitchboardConfig(
                 model_topics={"smart": ["pricing"]},
                 cooldown_turns=1,
@@ -108,7 +110,8 @@ class TestAgentSessionRouting:
     async def test_switch_event_callback_fires(self, fast_llm, smart_llm):
         events: list[SwitchEvent] = []
         sb = _make_sb(
-            fast_llm, smart_llm,
+            fast_llm,
+            smart_llm,
             config=SwitchboardConfig(
                 on_decision=events.append,
                 model_topics={"smart": ["pricing"]},

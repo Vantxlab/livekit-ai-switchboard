@@ -29,7 +29,9 @@ INSTRUCTIONS = "You are a helpful assistant. Keep responses very brief."
 class FakeLLMStream(llm.LLMStream):
     """Emits a single canned response chunk then closes."""
 
-    def __init__(self, *, llm_instance: llm.LLM, chat_ctx: llm.ChatContext, response: str) -> None:
+    def __init__(
+        self, *, llm_instance: llm.LLM, chat_ctx: llm.ChatContext, response: str
+    ) -> None:
         super().__init__(
             llm_instance,
             chat_ctx=chat_ctx,
@@ -63,8 +65,17 @@ class FakeLLM(llm.LLM):
     def provider(self) -> str:
         return "fake"
 
-    def chat(self, *, chat_ctx, tools=None, conn_options=DEFAULT_API_CONNECT_OPTIONS, **kwargs) -> llm.LLMStream:
-        return FakeLLMStream(llm_instance=self, chat_ctx=chat_ctx, response=self._response)
+    def chat(
+        self,
+        *,
+        chat_ctx,
+        tools=None,
+        conn_options=DEFAULT_API_CONNECT_OPTIONS,
+        **kwargs,
+    ) -> llm.LLMStream:
+        return FakeLLMStream(
+            llm_instance=self, chat_ctx=chat_ctx, response=self._response
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -74,12 +85,17 @@ class FakeLLM(llm.LLM):
 
 @pytest.fixture
 def fast_llm():
-    return FakeLLM(model_name="groq/llama-3.3-70b-versatile", response="Sure, I can help!")
+    return FakeLLM(
+        model_name="groq/llama-3.3-70b-versatile", response="Sure, I can help!"
+    )
 
 
 @pytest.fixture
 def smart_llm():
-    return FakeLLM(model_name="anthropic/claude-sonnet-4-6", response="Let me provide a detailed answer.")
+    return FakeLLM(
+        model_name="anthropic/claude-sonnet-4-6",
+        response="Let me provide a detailed answer.",
+    )
 
 
 @pytest.fixture
@@ -127,7 +143,9 @@ class TestAgentSessionOpenRouterAnthropic:
         async with AgentSession() as session:
             await session.start(Agent(instructions=INSTRUCTIONS, llm=switchboard))
 
-            result = await session.run(user_input="What is the pricing for your enterprise plan?")
+            result = await session.run(
+                user_input="What is the pricing for your enterprise plan?"
+            )
             result.expect.next_event().is_message(role="assistant")
             result.expect.no_more_events()
 
