@@ -12,6 +12,12 @@
 
 ---
 
+## Why?
+
+Voice agents shouldn't have to choose between *fast* and *smart*. Most turns are simple — greetings, confirmations, short follow-ups — and a lightweight model handles them in a fraction of the time. But the moment a conversation gets complex, frustrated, or hits a sensitive topic, you need the big model. **ai-switchboard** gives you both: sub-second latency on the easy turns, full intelligence when it matters.
+
+---
+
 Route conversations between **N named models** based on topics, heuristic signals, and custom rules. Simple turns stay on the fast model for low latency; complex, friction-heavy, or topic-sensitive turns escalate to higher-tier models automatically.
 
 The `Switchboard` is a drop-in [`llm.LLM`](https://docs.livekit.io/agents/) replacement — no extra wiring needed.

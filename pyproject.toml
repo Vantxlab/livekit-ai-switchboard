@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "livekit-ai-switchboard"
 version = "0.0.1"
-description = "Intelligent LLM routing for LiveKit voice agents"
+description = "Drop-in LLM router for LiveKit voice agents — route between N models using topics, heuristic signals, and custom rules"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -19,8 +19,22 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Communications :: Telephony",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
-keywords = ["livekit", "llm", "routing", "voice", "agents"]
+keywords = [
+    "livekit",
+    "llm",
+    "routing",
+    "voice-agents",
+    "model-routing",
+    "multi-model",
+    "voice-ai",
+    "conversational-ai",
+    "escalation",
+    "switchboard",
+]
 dependencies = [
     "livekit-agents>=1.0",
 ]
